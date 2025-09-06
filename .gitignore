@@ -1,0 +1,2 @@
+  __pycache__/   echo *.pyc  *.db  *.duckdb  .vscode/ 
+cmd_create_structure.txt 
