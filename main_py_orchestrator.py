@@ -18,9 +18,20 @@ from typing import Optional, List, Dict, Any
 import logging
 
 # Dodaj src do PYTHONPATH
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+project_root = Path(__file__).parent
+src_path = project_root / 'src'
+sys.path.insert(0, str(src_path))
 
-from src.config_manager import ConfigManager, create_config_manager
+# Import zależny od struktury katalogów
+try:
+    from src.config_manager import ConfigManager, create_config_manager
+except ImportError:
+    try:
+        from config_manager import ConfigManager, create_config_manager
+    except ImportError:
+        print("❌ Nie można znaleźć config_manager.py")
+        print("Sprawdź czy plik istnieje w katalogu 'src/' lub głównym katalogu")
+        sys.exit(1)
 
 class RetailAnalyticsOrchestrator:
     """
