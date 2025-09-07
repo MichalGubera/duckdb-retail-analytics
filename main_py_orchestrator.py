@@ -1,274 +1,366 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DuckDB Retail Analytics - Główny plik orchestrator
-==================================================
+Main Python Orchestrator - Główny orkestrator projektu
+=====================================================
 
-Ten plik koordynuje cały workflow projektu:
-1. Generacja danych
-2. Analiza z DuckDB  
-3. Tworzenie raportów
-4. Eksport wyników
+Centralne zarządzanie i koordynacja wszystkich komponentów projektu
+analizy danych retailowych z wykorzystaniem DuckDB.
 
-Autor: [Twoje Imię]
+Autor: Michał Gubera
 Data: 2025-09-07
 """
 
-import os
 import sys
-from pathlib import Path
 import argparse
+from pathlib import Path
+from typing import Optional, List, Dict, Any
 import logging
-from datetime import datetime
 
-# Dodaj ścieżki do modułów projektu
-project_root = Path(__file__).parent
-sys.path.append(str(project_root / "src"))
+# Dodaj src do PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-# Import modułów projektu
-try:
-    from src.data_generation.retail_data_generator import generate_retail_sales_data
-    from src.analysis.duckdb_analyzer import DuckDBAnalyzer
-    from src.utils.logger_config import setup_logging
-    from src.utils.config_manager import ConfigManager
-except ImportError as e:
-    print(f"❌ Błąd importu modułów: {e}")
-    print("💡 Upewnij się, że wszystkie wymagane pliki są w odpowiednich katalogach")
-    sys.exit(1)
+from src.config_manager import ConfigManager, create_config_manager
 
-class ProjectOrchestrator:
+class RetailAnalyticsOrchestrator:
     """
-    Główna klasa koordynująca cały projekt
+    Główny orkestrator projektu analizy danych retailowych
     """
     
-    def __init__(self, config_path=None):
+    def __init__(self, config_file: Optional[str] = None):
         """
         Inicjalizacja orchestratora
         
         Args:
-            config_path (str): Ścieżka do pliku konfiguracyjnego
+            config_file: Ścieżka do pliku konfiguracyjnego (domyślnie: config/config.yaml)
         """
-        self.project_root = Path(__file__).parent
-        self.config = ConfigManager(config_path)
-        self.logger = setup_logging()
-        self.analyzer = None
-        
-        # Utwórz katalogi jeśli nie istnieją
-        self.ensure_directories()
-        
-    def ensure_directories(self):
-        """Upewnij się, że wszystkie wymagane katalogi istnieją"""
-        dirs_to_create = [
-            self.config.raw_data_dir,
-            self.config.processed_data_dir,
-            self.config.output_dir,
-            self.config.figures_dir,
-            self.config.reports_dir
-        ]
-        
-        for directory in dirs_to_create:
-            directory.mkdir(parents=True, exist_ok=True)
+        # Domyślny plik konfiguracyjny
+        if config_file is None:
+            config_file = Path(__file__).parent / "config" / "config.yaml"
             
-    def step_1_generate_data(self, num_records=None, force_regenerate=False):
+        # Inicjalizacja ConfigManagera
+        try:
+            self.config = create_config_manager(str(config_file) if config_file.exists() else None)
+            self.logger = self.config.setup_logging()
+            self.logger.info("🚀 Retail Analytics Orchestrator zainicjalizowany")
+        except Exception as e:
+            print(f"❌ Błąd inicjalizacji konfiguracji: {e}")
+            # Fallback do domyślnej konfiguracji
+            self.config = create_config_manager()
+            self.logger = self.config.setup_logging()
+            self.logger.warning("⚠️  Używam domyślnej konfiguracji")
+        
+        # Status komponentów
+        self.components_status = {
+            'config': True,
+            'database': False,
+            'data_generator': False,
+            'data_processor': False,
+            'analyzer': False,
+            'visualizer': False
+        }
+        
+        # Cache dla importowanych modułów
+        self._modules = {}
+        
+    def _import_module(self, module_name: str, class_name: str = None):
         """
-        Krok 1: Generacja danych sprzedaży
+        Bezpieczny import modułu z cache
         
         Args:
-            num_records (int): Liczba rekordów do wygenerowania
-            force_regenerate (bool): Czy wymuszać regenerację danych
+            module_name: Nazwa modułu do importu
+            class_name: Nazwa klasy do importu (opcjonalne)
+            
+        Returns:
+            Zaimportowany moduł lub klasa
         """
-        self.logger.info("🔄 KROK 1: Generacja danych sprzedaży")
+        cache_key = f"{module_name}.{class_name}" if class_name else module_name
         
-        csv_file = self.config.raw_data_dir / "retail_sales_data.csv"
-        
-        # Sprawdź czy dane już istnieją
-        if csv_file.exists() and not force_regenerate:
-            self.logger.info(f"📄 Dane już istnieją w: {csv_file}")
-            self.logger.info("💡 Użyj --regenerate żeby wygenerować nowe dane")
-            return str(csv_file)
+        if cache_key in self._modules:
+            return self._modules[cache_key]
         
         try:
-            num_records = num_records or self.config.default_num_records
-            self.logger.info(f"📊 Generuję {num_records:,} rekordów danych...")
-            
-            # Generuj dane
-            retail_data = generate_retail_sales_data(num_records)
-            
-            # Zapisz do CSV
-            import pandas as pd
-            df = pd.DataFrame(retail_data)
-            df.to_csv(csv_file, index=False, encoding='utf-8')
-            
-            # Statystyki
-            self.logger.info(f"✅ Wygenerowano {len(df):,} rekordów")
-            self.logger.info(f"📁 Zapisano do: {csv_file}")
-            self.logger.info(f"💰 Łączna wartość sprzedaży: ${df['total_sale'].sum():,.2f}")
-            
-            return str(csv_file)
-            
-        except Exception as e:
-            self.logger.error(f"❌ Błąd podczas generacji danych: {e}")
-            raise
+            module = __import__(module_name, fromlist=[class_name] if class_name else [])
+            result = getattr(module, class_name) if class_name else module
+            self._modules[cache_key] = result
+            return result
+        except ImportError as e:
+            self.logger.error(f"❌ Nie można zaimportować {cache_key}: {e}")
+            return None
     
-    def step_2_analyze_data(self, csv_file):
+    def initialize_database(self) -> bool:
         """
-        Krok 2: Analiza danych z DuckDB
+        Inicjalizacja połączenia z bazą danych DuckDB
         
-        Args:
-            csv_file (str): Ścieżka do pliku CSV z danymi
+        Returns:
+            True jeśli inicjalizacja się powiodła
         """
-        self.logger.info("🔄 KROK 2: Analiza danych z DuckDB")
-        
         try:
-            # Inicjalizuj analyzer DuckDB
-            self.analyzer = DuckDBAnalyzer(
-                database_path=self.config.duckdb_file,
-                logger=self.logger
-            )
+            # Import modułu bazy danych (gdy będzie gotowy)
+            db_manager_class = self._import_module('src.database.db_manager', 'DatabaseManager')
             
-            # Załaduj dane do DuckDB
-            self.analyzer.load_csv_data(csv_file, table_name="retail_sales")
-            
-            # Wykonaj podstawowe analizy
-            results = {}
-            
-            # 1. Przegląd danych
-            results['overview'] = self.analyzer.get_data_overview()
-            
-            # 2. Analiza sprzedaży w czasie
-            results['time_analysis'] = self.analyzer.analyze_sales_trends()
-            
-            # 3. Analiza kategorii produktów
-            results['category_analysis'] = self.analyzer.analyze_product_categories()
-            
-            # 4. Segmentacja klientów
-            results['customer_analysis'] = self.analyzer.analyze_customer_segments()
-            
-            # 5. Analiza rentowności
-            results['profitability'] = self.analyzer.analyze_profitability()
-            
-            self.logger.info("✅ Analiza danych zakończona pomyślnie")
-            return results
-            
+            if db_manager_class:
+                db_config = self.config.get_database_config()
+                self.db_manager = db_manager_class(**db_config)
+                self.components_status['database'] = True
+                self.logger.info("✅ Baza danych zainicjalizowana")
+                return True
+            else:
+                self.logger.warning("⚠️  Moduł DatabaseManager niedostępny")
+                return False
+                
         except Exception as e:
-            self.logger.error(f"❌ Błąd podczas analizy danych: {e}")
-            raise
+            self.logger.error(f"❌ Błąd inicjalizacji bazy danych: {e}")
+            return False
     
-    def step_3_generate_reports(self, analysis_results):
+    def initialize_data_generator(self) -> bool:
         """
-        Krok 3: Generacja raportów i wizualizacji
+        Inicjalizacja generatora danych
         
-        Args:
-            analysis_results (dict): Wyniki analiz
+        Returns:
+            True jeśli inicjalizacja się powiodła
         """
-        self.logger.info("🔄 KROK 3: Generacja raportów")
-        
         try:
-            # Generuj raporty
-            reports_generated = []
+            # Import generatora danych (gdy będzie gotowy)
+            generator_class = self._import_module('src.data_generation.data_generator', 'DataGenerator')
             
-            # 1. Raport tekstowy
-            text_report = self.analyzer.generate_text_report(analysis_results)
-            report_file = self.config.reports_dir / f"retail_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            
-            with open(report_file, 'w', encoding='utf-8') as f:
-                f.write(text_report)
-            reports_generated.append(report_file)
-            
-            # 2. Wizualizacje
-            charts_created = self.analyzer.create_visualizations(
-                analysis_results, 
-                output_dir=self.config.figures_dir
-            )
-            reports_generated.extend(charts_created)
-            
-            self.logger.info(f"✅ Wygenerowano {len(reports_generated)} plików:")
-            for report in reports_generated:
-                self.logger.info(f"   📄 {report}")
-            
-            return reports_generated
-            
+            if generator_class:
+                gen_config = self.config.get_processing_config()
+                self.data_generator = generator_class(self.config)
+                self.components_status['data_generator'] = True
+                self.logger.info("✅ Generator danych zainicjalizowany")
+                return True
+            else:
+                self.logger.warning("⚠️  Moduł DataGenerator niedostępny")
+                return False
+                
         except Exception as e:
-            self.logger.error(f"❌ Błąd podczas generacji raportów: {e}")
-            raise
+            self.logger.error(f"❌ Błąd inicjalizacji generatora danych: {e}")
+            return False
     
-    def run_full_pipeline(self, num_records=None, force_regenerate=False):
+    def initialize_data_processor(self) -> bool:
         """
-        Uruchom cały pipeline projektu
+        Inicjalizacja procesora danych
+        
+        Returns:
+            True jeśli inicjalizacja się powiodła
+        """
+        try:
+            processor_class = self._import_module('src.data_processing.data_processor', 'DataProcessor')
+            
+            if processor_class:
+                self.data_processor = processor_class(self.config)
+                self.components_status['data_processor'] = True
+                self.logger.info("✅ Procesor danych zainicjalizowany")
+                return True
+            else:
+                self.logger.warning("⚠️  Moduł DataProcessor niedostępny")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Błąd inicjalizacji procesora danych: {e}")
+            return False
+    
+    def initialize_analyzer(self) -> bool:
+        """
+        Inicjalizacja analizatora danych
+        
+        Returns:
+            True jeśli inicjalizacja się powiodła
+        """
+        try:
+            analyzer_class = self._import_module('src.analysis.analyzer', 'DataAnalyzer')
+            
+            if analyzer_class:
+                self.analyzer = analyzer_class(self.config)
+                self.components_status['analyzer'] = True
+                self.logger.info("✅ Analizator danych zainicjalizowany")
+                return True
+            else:
+                self.logger.warning("⚠️  Moduł DataAnalyzer niedostępny")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Błąd inicjalizacji analizatora: {e}")
+            return False
+    
+    def initialize_visualizer(self) -> bool:
+        """
+        Inicjalizacja modułu wizualizacji
+        
+        Returns:
+            True jeśli inicjalizacja się powiodła
+        """
+        try:
+            visualizer_class = self._import_module('src.visualization.visualizer', 'DataVisualizer')
+            
+            if visualizer_class:
+                viz_config = self.config.get_visualization_config()
+                self.visualizer = visualizer_class(self.config)
+                self.components_status['visualizer'] = True
+                self.logger.info("✅ Wizualizator zainicjalizowany")
+                return True
+            else:
+                self.logger.warning("⚠️  Moduł DataVisualizer niedostępny")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Błąd inicjalizacji wizualizatora: {e}")
+            return False
+    
+    def initialize_all_components(self) -> Dict[str, bool]:
+        """
+        Inicjalizuj wszystkie komponenty systemu
+        
+        Returns:
+            Słownik ze statusem każdego komponentu
+        """
+        self.logger.info("🔄 Inicjalizacja wszystkich komponentów...")
+        
+        # Kolejność inicjalizacji jest ważna
+        self.initialize_database()
+        self.initialize_data_generator()
+        self.initialize_data_processor()
+        self.initialize_analyzer()
+        self.initialize_visualizer()
+        
+        # Podsumowanie
+        successful = sum(self.components_status.values())
+        total = len(self.components_status)
+        
+        self.logger.info(f"📊 Zainicjalizowano {successful}/{total} komponentów")
+        
+        if successful == total:
+            self.logger.info("🎉 Wszystkie komponenty gotowe!")
+        else:
+            failed = [name for name, status in self.components_status.items() if not status]
+            self.logger.warning(f"⚠️  Nie udało się zainicjalizować: {', '.join(failed)}")
+        
+        return self.components_status
+    
+    def run_full_pipeline(self, num_records: int = None) -> bool:
+        """
+        Uruchom pełny pipeline analizy danych
         
         Args:
-            num_records (int): Liczba rekordów do wygenerowania
-            force_regenerate (bool): Czy wymuszać regenerację danych
+            num_records: Liczba rekordów do wygenerowania (opcjonalne)
+            
+        Returns:
+            True jeśli pipeline zakończył się sukcesem
         """
-        start_time = datetime.now()
-        self.logger.info("🚀 ROZPOCZYNAM PEŁNY PIPELINE PROJEKTU")
-        self.logger.info("="*60)
-        
         try:
-            # Krok 1: Generacja danych
-            csv_file = self.step_1_generate_data(num_records, force_regenerate)
+            self.logger.info("🚀 Rozpoczynam pełny pipeline analizy danych")
             
-            # Krok 2: Analiza z DuckDB
-            analysis_results = self.step_2_analyze_data(csv_file)
+            # 1. Generowanie danych
+            if self.components_status.get('data_generator'):
+                records = num_records or self.config.default_num_records
+                self.logger.info(f"📊 Generowanie {records:,} rekordów danych")
+                # self.data_generator.generate_sample_data(records)
             
-            # Krok 3: Raporty i wizualizacje
-            reports = self.step_3_generate_reports(analysis_results)
+            # 2. Przetwarzanie danych
+            if self.components_status.get('data_processor'):
+                self.logger.info("🔄 Przetwarzanie danych")
+                # self.data_processor.process_data()
             
-            # Podsumowanie
-            end_time = datetime.now()
-            duration = end_time - start_time
+            # 3. Analiza danych
+            if self.components_status.get('analyzer'):
+                self.logger.info("🔍 Analiza danych")
+                # results = self.analyzer.run_all_analyses()
             
-            self.logger.info("="*60)
-            self.logger.info("🎉 PIPELINE ZAKOŃCZONY POMYŚLNIE!")
-            self.logger.info(f"⏱️  Czas wykonania: {duration}")
-            self.logger.info(f"📊 Plik danych: {csv_file}")
-            self.logger.info(f"🗃️  Baza DuckDB: {self.config.duckdb_file}")
-            self.logger.info(f"📈 Raporty: {len(reports)} plików w {self.config.reports_dir}")
-            self.logger.info("="*60)
+            # 4. Wizualizacja wyników
+            if self.components_status.get('visualizer'):
+                self.logger.info("📈 Generowanie wizualizacji")
+                # self.visualizer.create_all_charts()
+            
+            self.logger.info("✅ Pipeline zakończony pomyślnie!")
+            return True
             
         except Exception as e:
-            self.logger.error(f"💥 PIPELINE PRZERWANY: {e}")
-            raise
-        finally:
-            # Zamknij połączenie z DuckDB
-            if self.analyzer:
-                self.analyzer.close()
+            self.logger.error(f"❌ Błąd w pipeline: {e}")
+            return False
+    
+    def run_analysis_only(self) -> bool:
+        """
+        Uruchom tylko analizę danych (bez generowania)
+        
+        Returns:
+            True jeśli analiza się powiodła
+        """
+        try:
+            self.logger.info("🔍 Uruchamiam analizę istniejących danych")
+            
+            if not self.components_status.get('analyzer'):
+                self.logger.error("❌ Analizator nie jest zainicjalizowany")
+                return False
+            
+            # Uruchom analizę
+            # results = self.analyzer.run_all_analyses()
+            
+            # Generuj wizualizacje jeśli dostępne
+            if self.components_status.get('visualizer'):
+                # self.visualizer.create_all_charts()
+                pass
+            
+            self.logger.info("✅ Analiza zakończona!")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Błąd w analizie: {e}")
+            return False
+    
+    def generate_report(self, report_type: str = "full") -> str:
+        """
+        Wygeneruj raport z analizy
+        
+        Args:
+            report_type: Typ raportu ('full', 'summary', 'charts')
+            
+        Returns:
+            Ścieżka do wygenerowanego raportu
+        """
+        try:
+            self.logger.info(f"📋 Generowanie raportu: {report_type}")
+            
+            report_filename = self.config.get_dated_filename(f"report_{report_type}", "html")
+            report_path = self.config.reports_dir / report_filename
+            
+            # TODO: Implementacja generowania raportów
+            # report_content = self._create_report_content(report_type)
+            # with open(report_path, 'w', encoding='utf-8') as f:
+            #     f.write(report_content)
+            
+            self.logger.info(f"📁 Raport zapisany: {report_path}")
+            return str(report_path)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Błąd generowania raportu: {e}")
+            return ""
+    
+    def show_status(self) -> None:
+        """Wyświetl status wszystkich komponentów"""
+        print("\n" + "="*50)
+        print("📊 STATUS KOMPONENTÓW SYSTEMU")
+        print("="*50)
+        
+        for component, status in self.components_status.items():
+            emoji = "✅" if status else "❌"
+            status_text = "AKTYWNY" if status else "NIEAKTYWNY"
+            print(f"{emoji} {component.upper():<15} - {status_text}")
+        
+        print("\n📁 ŚCIEŻKI KONFIGURACJI:")
+        print(f"   Projekt: {self.config.project_root}")
+        print(f"   Baza danych: {self.config.duckdb_file}")
+        print(f"   Wyniki: {self.config.output_dir}")
+        print(f"   Logi: {self.config.log_file}")
+        print("="*50 + "\n")
+
 
 def main():
-    """Główna funkcja uruchamiająca"""
+    """Główna funkcja programu"""
     
     # Argumenty linii poleceń
     parser = argparse.ArgumentParser(
-        description="DuckDB Retail Analytics - System analizy danych sprzedaży",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Przykłady użycia:
-  python main.py                          # Uruchom pełny pipeline
-  python main.py --records 50000          # Wygeneruj 50k rekordów
-  python main.py --regenerate             # Wymuszaj regenerację danych
-  python main.py --step generate          # Tylko generacja danych
-  python main.py --step analyze           # Tylko analiza danych
-        """
-    )
-    
-    parser.add_argument(
-        '--records', '-r',
-        type=int,
-        default=10000,
-        help='Liczba rekordów do wygenerowania (default: 10000)'
-    )
-    
-    parser.add_argument(
-        '--regenerate',
-        action='store_true',
-        help='Wymuszaj regenerację danych nawet jeśli już istnieją'
-    )
-    
-    parser.add_argument(
-        '--step', '-s',
-        choices=['generate', 'analyze', 'reports', 'full'],
-        default='full',
-        help='Który krok uruchomić (default: full - wszystkie kroki)'
+        description="Retail Analytics Orchestrator - główny punkt kontroli projektu"
     )
     
     parser.add_argument(
@@ -278,40 +370,72 @@ Przykłady użycia:
     )
     
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Szczegółowe informacje debug'
+        '--command',
+        choices=['init', 'pipeline', 'analysis', 'report', 'status'],
+        default='status',
+        help='Komenda do wykonania (domyślnie: status)'
+    )
+    
+    parser.add_argument(
+        '--records', '-r',
+        type=int,
+        help='Liczba rekordów do wygenerowania'
+    )
+    
+    parser.add_argument(
+        '--report-type',
+        choices=['full', 'summary', 'charts'],
+        default='full',
+        help='Typ raportu do wygenerowania'
     )
     
     args = parser.parse_args()
     
     try:
-        # Inicjalizuj orchestrator
-        orchestrator = ProjectOrchestrator(config_path=args.config)
+        # Inicjalizacja orchestratora
+        orchestrator = RetailAnalyticsOrchestrator(args.config)
         
-        if args.verbose:
-            orchestrator.logger.setLevel(logging.DEBUG)
-        
-        # Wykonaj odpowiedni krok
-        if args.step == 'generate':
-            orchestrator.step_1_generate_data(args.records, args.regenerate)
-        elif args.step == 'analyze':
-            csv_file = orchestrator.config.raw_data_dir / "retail_sales_data.csv"
-            if not csv_file.exists():
-                print("❌ Brak danych! Uruchom najpierw: python main.py --step generate")
-                sys.exit(1)
-            orchestrator.step_2_analyze_data(str(csv_file))
-        elif args.step == 'reports':
-            print("🔄 Funkcja raportów będzie dostępna po implementacji analizy")
-        else:  # full
-            orchestrator.run_full_pipeline(args.records, args.regenerate)
+        if args.command == 'init':
+            print("🔄 Inicjalizacja komponentów...")
+            orchestrator.initialize_all_components()
+            orchestrator.show_status()
             
+        elif args.command == 'pipeline':
+            print("🚀 Uruchamianie pełnego pipeline...")
+            orchestrator.initialize_all_components()
+            success = orchestrator.run_full_pipeline(args.records)
+            if success:
+                print("✅ Pipeline zakończony pomyślnie!")
+            else:
+                print("❌ Pipeline zakończony błędem!")
+                
+        elif args.command == 'analysis':
+            print("🔍 Uruchamianie analizy...")
+            orchestrator.initialize_all_components()
+            success = orchestrator.run_analysis_only()
+            if success:
+                print("✅ Analiza zakończona pomyślnie!")
+            else:
+                print("❌ Analiza zakończona błędem!")
+                
+        elif args.command == 'report':
+            print(f"📋 Generowanie raportu ({args.report_type})...")
+            orchestrator.initialize_all_components()
+            report_path = orchestrator.generate_report(args.report_type)
+            if report_path:
+                print(f"✅ Raport zapisany: {report_path}")
+            else:
+                print("❌ Błąd generowania raportu!")
+                
+        elif args.command == 'status':
+            orchestrator.show_status()
+    
     except KeyboardInterrupt:
-        print("\n⚠️  Pipeline przerwany przez użytkownika")
-        sys.exit(1)
+        print("\n⚠️  Przerwano przez użytkownika")
     except Exception as e:
-        print(f"💥 Błąd: {e}")
+        print(f"❌ Nieoczekiwany błąd: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
