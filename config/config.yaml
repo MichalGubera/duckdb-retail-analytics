@@ -1,0 +1,222 @@
+# =================================================================
+# Konfiguracja projektu Retail Analytics z DuckDB
+# =================================================================
+# Plik: config/config.yaml
+# Opis: Centralna konfiguracja wszystkich parametrów projektu
+
+# Informacje o projekcie
+project_info:
+  name: "DuckDB Retail Analytics"
+  version: "1.0.0"
+  description: "Analiza danych sprzedażowych z wykorzystaniem DuckDB"
+  author: "Michał Gubera"
+
+# Ścieżki katalogów (relatywne do głównego katalogu projektu)
+paths:
+  data_dir: "data"
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  sample_data_dir: "data/sample"
+  output_dir: "output"
+  reports_dir: "output/reports"
+  figures_dir: "output/figures"
+
+# Parametry generowania danych
+data_generation:
+  default_num_records: 50000
+  default_start_date: "2023-01-01"
+  default_end_date: "2024-12-31"
+  chunk_size: 10000
+  
+  # Parametry produktów
+  products:
+    num_products: 1000
+    categories: 
+      - "Elektronika"
+      - "Odzież"
+      - "Dom i Ogród"
+      - "Książki"
+      - "Sport"
+      - "Kosmetyki"
+    price_range:
+      min: 5.0
+      max: 2000.0
+
+  # Parametry klientów
+  customers:
+    num_customers: 5000
+    age_range:
+      min: 18
+      max: 80
+    cities:
+      - "Warszawa"
+      - "Kraków"
+      - "Gdańsk"
+      - "Wrocław"
+      - "Poznań"
+      - "Łódź"
+
+# Konfiguracja DuckDB
+database:
+  duckdb_file: "data/retail_analytics.duckdb"
+  memory_limit: "4GB"
+  threads: 4
+  enable_optimizer: true
+  enable_profiling: false
+  temp_directory: "data/temp"
+
+# Ustawienia przetwarzania danych
+processing:
+  max_memory_usage: "2GB"
+  parallel_processing: true
+  cache_results: true
+  
+  # Filtry danych
+  filters:
+    min_transaction_value: 1.0
+    max_transaction_value: 10000.0
+    exclude_refunds: true
+
+# Konfiguracja wizualizacji
+visualization:
+  figure_dpi: 300
+  figure_format: "png"
+  figure_size: [12, 8]
+  color_palette: "viridis"
+  style: "whitegrid"
+  
+  # Ustawienia wykresów
+  charts:
+    show_grid: true
+    show_legend: true
+    title_fontsize: 16
+    label_fontsize: 12
+    
+  # Formaty eksportu
+  export_formats:
+    - "png"
+    - "pdf"
+    - "svg"
+
+# System logowania
+logging:
+  log_level: "INFO"
+  log_file: "logs/analytics.log"
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  max_log_size: "10MB"
+  backup_count: 5
+  
+  # Poziomy logowania dla różnych modułów
+  module_levels:
+    duckdb: "WARNING"
+    matplotlib: "ERROR"
+    pandas: "WARNING"
+
+# Analityka i raporty
+analytics:
+  # Metryki do obliczania
+  metrics:
+    - "total_revenue"
+    - "average_order_value"
+    - "customer_lifetime_value"
+    - "product_popularity"
+    - "seasonal_trends"
+    - "geographic_analysis"
+  
+  # Okresy analizy
+  time_periods:
+    - "daily"
+    - "weekly"
+    - "monthly"
+    - "quarterly"
+    - "yearly"
+  
+  # Automatyczne raporty
+  auto_reports:
+    enabled: true
+    schedule: "weekly"
+    recipients: 
+      - "analyst@company.com"
+    formats: ["html", "pdf"]
+
+# Ustawienia wydajności
+performance:
+  # Cache
+  enable_cache: true
+  cache_size: "500MB"
+  cache_directory: "data/cache"
+  
+  # Optymalizacje
+  optimize_queries: true
+  use_columnar_storage: true
+  compress_data: true
+  
+  # Limity
+  query_timeout: 300  # sekundy
+  max_result_rows: 1000000
+
+# Konfiguracja środowiska
+environment:
+  # Środowisko (development, staging, production)
+  env_type: "development"
+  
+  # Debugowanie
+  debug_mode: true
+  verbose_output: true
+  
+  # Bezpieczeństwo
+  enable_security: false
+  require_authentication: false
+
+# Integracje zewnętrzne
+integrations:
+  # Eksport danych
+  export:
+    enable_csv: true
+    enable_excel: true
+    enable_json: true
+    enable_parquet: true
+  
+  # Powiadomienia
+  notifications:
+    enabled: false
+    webhook_url: null
+    email_notifications: false
+
+# Zaawansowane ustawienia
+advanced:
+  # Experimental features
+  experimental_features:
+    enable_gpu_acceleration: false
+    use_arrow_backend: false
+    enable_streaming: false
+  
+  # Custom SQL queries
+  custom_queries:
+    top_customers: |
+      SELECT customer_id, SUM(total_amount) as total_spent
+      FROM transactions 
+      GROUP BY customer_id 
+      ORDER BY total_spent DESC 
+      LIMIT 10
+    
+    monthly_sales: |
+      SELECT 
+        DATE_TRUNC('month', transaction_date) as month,
+        SUM(total_amount) as monthly_revenue
+      FROM transactions
+      GROUP BY month
+      ORDER BY month
+
+# Metadane konfiguracji
+metadata:
+  created_date: "2025-09-07"
+  last_modified: "2025-09-07"
+  config_version: "1.0"
+  min_python_version: "3.8"
+  dependencies:
+    - "duckdb>=0.8.0"
+    - "pandas>=1.5.0"
+    - "matplotlib>=3.5.0"
+    - "seaborn>=0.11.0"
+    - "pyyaml>=6.0"
