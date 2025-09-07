@@ -1,15 +1,15 @@
 # DuckDB Retail Analytics Project 
  
-Projekt analizy danych sprzeda¿y detalicznej z wykorzystaniem DuckDB i Python. 
+Retail sales data analysis project using DuckDB and Python. 
  
-## Struktura projektu 
+## Project structure 
  
-- `data/` - dane projektowe 
-- `src/` - kod zród³ˆowy 
-- `notebooks/` - analizy w Jupyter 
-- `output/` - wyniki i raporty 
+- `data/` - project data 
+- `src/` - source code 
+- `notebooks/` - analyses in Jupyter 
+- `output/` - results and reports 
  
-## Instalacja 
+## Instalation 
  
 ```bash 
 conda create -n duckdb-analytics python=3.11 -y 
